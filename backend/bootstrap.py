@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 import time
 from abc import ABC, abstractmethod
-import uuid
+from uuid import uuid4 as uuid
 
 class Payment():
     authorization_number = None
@@ -42,6 +43,21 @@ class Invoice:
         self.shipping_address = attributes.get('shipping_address', None)
         self.order = attributes.get('order', None)
 
+class OrderItemHandler:
+    order = None
+    product = None
+    def __init__(self, order):
+        self.order = order
+
+    def get_order_item(self, product):
+        if product.type == "book":
+            return ItemBook(order=self.order, product=product)
+        elif product.type == "physical":
+            return ItemPhysicalProduct(order=self.order, product=product)
+        elif product.type == "digital":
+            return ItemDigitalProduct(order=self.order, product=product)
+        elif product.type == "membership":
+            return ItemMembership(order=self.order, product=product)
 
 class Order:
     customer = None
@@ -53,17 +69,12 @@ class Order:
     def __init__(self, customer, attributes={}):
         self.customer = customer
         self.items = []
+        self.order_item_handler = OrderItemHandler(order=self)
         self.address = attributes.get('address', Address(zipcode='45678-979'))
 
     def add_product(self, product):
-        if product.type == "book":
-            self.items.append(ItemBook(self, product))
-        elif product.type == "physical":
-            self.items.append(ItemPhysicalProduct(self, product))
-        elif product.type == "digital":
-            self.items.append(ItemDigitalProduct(self, product))
-        elif product.type == "membership":
-            self.items.append(ItemMembership(self, product))
+        item = self.order_item_handler.get_order_item(product=product)
+        self.items.append(item)
 
     def total_amount(self):
         total = 0
@@ -80,9 +91,12 @@ class Order:
         self.payment.pay()
 
     def handle_shipping_rules(self):
-        if self.payment.is_paid():
-            for item in self.items:
-                item.handle()
+        try:
+            if self.payment.is_paid():
+                for item in self.items:
+                    item.handle()
+        except:
+            raise ValueError("Order must be paid before handling shipping rules")
 
 class OrderItem(ABC):
     order = None
@@ -96,7 +110,7 @@ class OrderItem(ABC):
         return 10
 
     def generate_shipping_label(self):
-        return (uuid.uuid4())
+        return (uuid())
 
     def send_mail(self, content, email):
         print("Sending mail to {0}".format(email))
@@ -117,7 +131,7 @@ class ItemMembership(OrderItem):
     def handle(self):
         print(" ---- ASSINATURA ---- ")
         new_membership = Membership(self.product.name)
-        self.order.customer.add_membership(new_membership)
+        self.order.customer.add_membership(membership=new_membership)
         content = "Membership activated!"
         self.send_mail(content, self.order.customer.email)
 
@@ -134,7 +148,7 @@ class ItemDigitalProduct(OrderItem):
     discount = 10
     def handle(self):
         print(" ---- DIGITAL ---- ")
-        new_voucher = Voucher(self.discount)
+        new_voucher = Voucher(discount=self.discount)
         self.order.customer.add_voucher(new_voucher)
         content = "Purchase of {0} completed successfully!".format(self.product.name)
         self.send_mail(content, self.order.customer.email)
@@ -146,13 +160,20 @@ class Voucher:
 
 class Product:
     # use type to distinguish each kind of product: physical, book, digital, membership, etc.
+    produt_types = None
     name = None
     type = None
-    payment = None
 
     def __init__(self, name, type):
-        self.name = name
-        self.type = type
+        self.produt_types = ['book', 'digital', 'physical', 'membership']
+        if type in self.produt_types:      
+            self.name = name
+            self.type = type
+        else:
+            raise ValueError("Product type must be one of the following: 'book', 'digital', 'physical' or 'membership'")
+
+    def get_product_types(self):
+        return self.produt_types
 
 class Address:
     zipcode = None
@@ -174,18 +195,26 @@ class Customer:
     address = None
     memberships = None
 
-    def __init__(self, name, email, zipcode):
+    def __init__(self, name, email):
         self.name = name
         self.email = email
         self.vouchers = []
         self.memberships = []
-        self.address = Address(zipcode)
+
+    def add_address(self, zipcode):
+        self.address = Address(zipcode=zipcode)
 
     def add_voucher(self, voucher):
-        self.vouchers.append(voucher)
+        if isinstance(voucher, Voucher):
+            self.vouchers.append(voucher)
+        else: 
+            raise ValueError("Error adding Voucher")
 
     def add_membership(self, membership):
-        self.memberships.append(membership)
+        if isinstance(membership, Membership):
+            self.memberships.append(membership)
+        else:
+            raise ValueError("Error adding Membership")
 
 class Membership:
     name = None
@@ -203,7 +232,7 @@ class Membership:
         return (activated_at != None and deactivated_at == None)
 
 
-foolano = Customer("Foolano", "foolano@gmail.com", "00000-000")
+foolano = Customer("Foolano", "foolano@gmail.com")
 physical = Product(name='Fridge', type='physical')
 membership = Product(name='Amazon Prime', type='membership')
 book = Product(name='Awesome book', type='book')
@@ -214,7 +243,6 @@ my_order.add_product(physical)
 my_order.add_product(membership)
 my_order.add_product(book)
 my_order.add_product(digital)
-
 
 attributes = dict(
     order=my_order,
